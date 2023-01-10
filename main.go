@@ -57,6 +57,9 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 	for _, plant := range pDB.Plants {
 		items = append(items, plant)
 	}
+	sort.Slice(items, func(i, j int) bool {
+		items[i].(*Plant).nextScheduledWateringDay()
+	})
 
 	delegate := list.NewDefaultDelegate()
 	delegate.SetHeight(3)
@@ -70,8 +73,6 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 	}
 	l.KeyMap.NextPage.SetKeys(keys...)
 
-	// Somehow, the "width" setting on the table does not influence the actual width of the table...
-	// This is manual padding. Breaks down when user is filtering, where title is hidden...
 	l.Title = "Your Glorious Plants"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -85,6 +86,7 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 			key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "water")),
 			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fertilized")),
 			key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "repotted")),
+			key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		}
 	}
 	l.AdditionalFullHelpKeys = func() []key.Binding {
@@ -108,6 +110,10 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 			key.NewBinding(
 				key.WithKeys("p"),
 				key.WithHelp("p", "mark as repotted"),
+			),
+			key.NewBinding(
+				key.WithKeys("e"),
+				key.WithHelp("e", "edit plant"),
 			),
 		}
 	}
@@ -161,7 +167,7 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return sp, tea.Quit
 
-		case "w", "f", "p", "W":
+		case "w", "f", "p", "W", "e":
 			if sp.list.SettingFilter() || sp.prompt != nil {
 				break
 			}
@@ -169,7 +175,7 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := sp.list.VisibleItems()[sp.list.Index()].(*Plant)
 				switch keypress {
 				case "w":
-					p.WateredAt = addEvent(p.WateredAt, time.Now())
+					p.WateredAt = toggleEvent(p.WateredAt, time.Now())
 				case "W":
 					sp.prompt = newWateringPrompt(p)
 					return sp, nil
@@ -178,6 +184,10 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return sp, nil
 				case "p":
 					sp.prompt = newRepottingPrompt(p)
+					return sp, nil
+				case "e": // edit
+					sp.prompt = p.Prompt(nil)
+					return sp, nil
 				}
 			}
 
@@ -185,7 +195,12 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sp.list.SettingFilter() || sp.prompt != nil {
 				break
 			}
-			sp.prompt = newAddPlant(sp.PlantDB)
+			// TODO: list doesn't actually update after adding the plant.
+			// App has to be restarted for that.
+			var p *Plant
+			sp.prompt = p.Prompt(func(p *Plant) {
+				sp.PlantDB.Plants = append(sp.PlantDB.Plants, p)
+			})
 			return sp, nil
 
 		case "esc":
@@ -308,34 +323,66 @@ func (ip *inputPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle character input and blinking
-	cmd := ip.updateInputs(msg)
-
-	return ip, cmd
+	return ip, ip.updateInputs(msg)
 }
 func (ip *inputPrompt) Init() tea.Cmd { return textinput.Blink }
 
-func newAddPlant(pDB *PlantDB) *inputPrompt {
+func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
+	if p == nil && confirm == nil {
+		return nil
+	}
+
+	withValue := func(ti textinput.Model, value string) textinput.Model {
+		if p != nil {
+			ti.SetValue(value)
+			// set value also sets focus, so remove again.
+			ti.Blur()
+		}
+		return ti
+	}
+
 	plantName := newTextInput("Plant Name", "Friedrich")
 	plantName.Focus()
 	plantName.PromptStyle = focusedStyle
 	plantName.TextStyle = focusedStyle
+	var (
+		variety     = newTextInput("Variety", "monstera deliciosa")
+		location    = newTextInput("Location", "Kitchen")
+		wetSoil     = newIntInput("Wet Soil Depth", "in cm")
+		watering    = newIntervalInput("Watering Intervals")
+		fertilizing = newIntervalInput("Fertilizing Intervals")
+		potSize     = newIntInput("Pot Size", "in cm")
+		lightLevel  = newLightLevelInput()
+		sourcedFrom = newTextInput("Sourced From", "Propagation")
+		comments    = newTextInput("Comments", "...")
+	)
 
+	if p != nil {
+		plantName = withValue(plantName, p.Name)
+		variety = withValue(variety, p.Variety)
+		location = withValue(location, p.Location)
+		wetSoil = withValue(wetSoil, strconv.Itoa(p.WetSoilDepth))
+		watering = withValue(watering, p.WateringIntervals.String())
+		fertilizing = withValue(fertilizing, p.FertilizingIntervals.String())
+		potSize = withValue(potSize, strconv.Itoa(p.PotSize))
+		lightLevel = withValue(lightLevel, p.LightLevel.String())
+		sourcedFrom = withValue(sourcedFrom, p.SourcedFrom)
+		comments = withValue(comments, p.Comments)
+	}
+
+	title := "Edit Plant"
+	if p == nil {
+		title = "Add Plant"
+	}
 	return &inputPrompt{
-		title: "Add Plant",
+		title: title,
 		inputs: []textinput.Model{
-			plantName,
-			newTextInput("Variety", "monstera deliciosa"),
-			newTextInput("Location", "Kitchen"),
-			newIntInput("Wet Soil Depth", "in cm"),
-			newIntervalInput("Watering Intervals"),
-			newIntervalInput("Fertilizing Intervals"),
-			newIntInput("Pot Size", "in cm"),
-			newLightLevelInput(),
-			newTextInput("Sourced From", "Propagation"),
-			newTextInput("Comments", "..."),
+			plantName, variety, location,
+			wetSoil, watering, fertilizing, potSize,
+			lightLevel, sourcedFrom, comments,
 		},
 		confirmAction: func(ap *inputPrompt) tea.Model {
-			pDB.Plants = append(pDB.Plants, &Plant{
+			promptPlant := Plant{
 				Name:     ap.inputs[0].Value(),
 				Variety:  ap.inputs[1].Value(),
 				Location: ap.inputs[2].Value(),
@@ -355,17 +402,23 @@ func newAddPlant(pDB *PlantDB) *inputPrompt {
 					s, _ := strconv.Atoi(ap.inputs[6].Value())
 					return s
 				}(),
-				LightLevel: func() LightLevel {
+				LightLevel: func() *LightLevel {
 					l, _ := parseLightLevel(ap.inputs[7].Value())
-					return *l
+					return l
 				}(),
 				SourcedFrom: ap.inputs[8].Value(),
 				Comments:    ap.inputs[9].Value(),
-			})
+			}
+			if confirm != nil {
+				confirm(&promptPlant)
+			} else {
+				*p = promptPlant
+			}
 			return nil
 		},
 	}
 }
+
 func newTextInput(prompt, placeholder string) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = prompt + " > "
@@ -454,7 +507,7 @@ func newFertilizerPrompt(plant *Plant) *inputPrompt {
 	return &inputPrompt{
 		inputs:     []textinput.Model{date, input},
 		focusIndex: 1,
-		title:      "Add Fertilization Event",
+		title:      "Add / Remove Fertilization Event",
 		confirmAction: func(ip *inputPrompt) tea.Model {
 			date, err := parseInputDate(ip.inputs[0].Value())
 			if err != nil {
@@ -470,7 +523,7 @@ func newFertilizerPrompt(plant *Plant) *inputPrompt {
 				ft = GranularFertilizer
 			}
 
-			plant.FertilizedAt = addEvent(plant.FertilizedAt, date)
+			plant.FertilizedAt = toggleEvent(plant.FertilizedAt, date)
 			plant.FertilizedWith = &ft
 			return nil
 		},
@@ -484,7 +537,7 @@ func newWateringPrompt(plant *Plant) *inputPrompt {
 	date.TextStyle = focusedStyle
 	return &inputPrompt{
 		inputs: []textinput.Model{date},
-		title:  "Add Watering Event",
+		title:  "Add / Remove Watering Event",
 		confirmAction: func(ip *inputPrompt) tea.Model {
 			date, err := parseInputDate(ip.inputs[0].Value())
 			if err != nil {
@@ -492,7 +545,7 @@ func newWateringPrompt(plant *Plant) *inputPrompt {
 				panic(err)
 			}
 
-			plant.WateredAt = addEvent(plant.WateredAt, date)
+			plant.WateredAt = toggleEvent(plant.WateredAt, date)
 			return nil
 		},
 	}
@@ -507,7 +560,7 @@ func newRepottingPrompt(plant *Plant) *inputPrompt {
 	return &inputPrompt{
 		inputs:     []textinput.Model{date, newSize},
 		focusIndex: 1,
-		title:      "Add New Pot",
+		title:      "Add / Remove Repotting Event",
 		confirmAction: func(ip *inputPrompt) tea.Model {
 			date, err := parseInputDate(ip.inputs[0].Value())
 			if err != nil {
@@ -517,7 +570,7 @@ func newRepottingPrompt(plant *Plant) *inputPrompt {
 
 			newSize, _ := strconv.Atoi(ip.inputs[0].Value())
 			plant.PotSize = newSize
-			plant.RepottedAt = addEvent(plant.RepottedAt, date)
+			plant.RepottedAt = toggleEvent(plant.RepottedAt, date)
 			return nil
 		},
 	}
@@ -611,7 +664,7 @@ type Plant struct {
 	WateringIntervals    SeasonalIntervals `json:"watering_intervals"`
 	WetSoilDepth         int               `json:"wet_soil_depth"`
 	FertilizingIntervals SeasonalIntervals `json:"fertilizing_intervals"`
-	LightLevel           LightLevel        `json:"light_level"`
+	LightLevel           *LightLevel       `json:"light_level"`
 	Comments             string            `json:"comments"`
 	SourcedFrom          string            `json:"sourced_from"`
 }
@@ -630,6 +683,18 @@ var lightLevels = [...]LightLevel{
 	"bright, indirect light",
 	"bright / semi-shaded",
 	"semi-shaded / shaded",
+}
+
+func (l *LightLevel) String() string {
+	if l == nil {
+		return ""
+	}
+	for i := range lightLevels {
+		if lightLevels[i] == *l {
+			return strconv.Itoa(i) + ": " + string(*l)
+		}
+	}
+	return "unknown light level"
 }
 
 func (l *LightLevel) UnmarshalJSON(b []byte) error {
@@ -794,7 +859,7 @@ func (p Plant) Overview() string {
 	t2Rows := []table.Row{
 		{"Watering", p.WateringIntervals.String()},
 		{"Fertilizing", p.FertilizingIntervals.String()},
-		{"Light Level", string(p.LightLevel)},
+		{"Light Level", p.LightLevel.String()},
 		{"Soil Dryness", strconv.Itoa(p.WetSoilDepth) + "cm"},
 	}
 
@@ -874,20 +939,16 @@ func (p Plant) Description() string {
 		"Last Watered: " + formatTimeInDays(last(p.WateredAt))
 }
 
-func addEvent(events []time.Time, newEvent time.Time) []time.Time {
+func toggleEvent(events []time.Time, newEvent time.Time) []time.Time {
 	ny, nm, nd := newEvent.Date()
-	for _, pastEvent := range events {
+	for i, pastEvent := range events {
 		py, pm, pd := pastEvent.Date()
 		if ny == py && nm == pm && nd == pd {
-			return events
+			return append(events[:i], events[i+1:]...)
 		}
 	}
 
 	return append(events, newEvent)
-}
-
-func (p *Plant) Watered() {
-	p.WateredAt = addEvent(p.WateredAt, time.Now())
 }
 
 func (p Plant) renderStatistics() string {
@@ -959,7 +1020,7 @@ func (p Plant) nextScheduledWateringDay() string {
 		last = p.WateredAt[len(p.WateredAt)-1]
 	}
 
-	return nextScheduledDay(last, p.WateringIntervals)
+	return humanDaysDate(scheduledIn(last, p.WateringIntervals))
 }
 
 func (p Plant) nextScheduledFertilizingDay() string {
@@ -968,10 +1029,10 @@ func (p Plant) nextScheduledFertilizingDay() string {
 		last = p.FertilizedAt[len(p.FertilizedAt)-1]
 	}
 
-	return nextScheduledDay(last, p.FertilizingIntervals)
+	return scheduledIn(last, p.FertilizingIntervals)
 }
 
-func nextScheduledDay(lastEvent time.Time, intervals SeasonalIntervals) string {
+func scheduledIn(lastEvent time.Time, intervals SeasonalIntervals) (days int) {
 	var days int
 	now := time.Now()
 	d := now.YearDay()
@@ -1006,6 +1067,10 @@ func nextScheduledDay(lastEvent time.Time, intervals SeasonalIntervals) string {
 		days = daysFromToday(next)
 	}
 
+	return days
+}
+
+func humanDaysDate(days int) string {
 	switch {
 	case days < -1:
 		return strconv.Itoa(-days) + " days overdue"
@@ -1016,11 +1081,11 @@ func nextScheduledDay(lastEvent time.Time, intervals SeasonalIntervals) string {
 	case days == 1:
 		return "tomorrow"
 	default:
-		return "in " + humanDays(days)
+		return "in " + humanDaysDuration(days)
 	}
 }
 
-func humanDays(days int) string {
+func humanDaysDuration(days int) string {
 	if days < 14 {
 		return strconv.Itoa(days) + " days"
 	}
@@ -1058,9 +1123,9 @@ func formatTimeInDays(t time.Time) string {
 		return "yesterday"
 	default:
 		if days > 0 {
-			return "in " + humanDays(days)
+			return "in " + humanDaysDuration(days)
 		} else {
-			return humanDays(-days) + " ago"
+			return humanDaysDuration(-days) + " ago"
 		}
 	}
 }
