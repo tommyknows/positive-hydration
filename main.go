@@ -57,8 +57,17 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 	for _, plant := range pDB.Plants {
 		items = append(items, plant)
 	}
+
+	// sort plants by next watering day.
 	sort.Slice(items, func(i, j int) bool {
-		items[i].(*Plant).nextScheduledWateringDay()
+		di, iok := scheduledIn(last(items[i].(*Plant).WateredAt), items[i].(*Plant).WateringIntervals)
+		dj, jok := scheduledIn(last(items[j].(*Plant).WateredAt), items[j].(*Plant).WateringIntervals)
+		if iok && jok {
+			return di < dj
+		} else if jok {
+			return true
+		}
+		return false
 	})
 
 	delegate := list.NewDefaultDelegate()
@@ -1015,25 +1024,30 @@ func stripHeaderFromTable(table string) string {
 }
 
 func (p Plant) nextScheduledWateringDay() string {
-	var last time.Time
-	if len(p.WateredAt) > 0 {
-		last = p.WateredAt[len(p.WateredAt)-1]
-	}
+	//var last time.Time
+	//if len(p.WateredAt) > 0 {
+	//last = p.WateredAt[len(p.WateredAt)-1]
+	//}
 
-	return humanDaysDate(scheduledIn(last, p.WateringIntervals))
+	if days, ok := scheduledIn(last(p.WateredAt), p.WateringIntervals); ok {
+		return humanDaysDuration(days)
+	}
+	return "unknown"
 }
 
 func (p Plant) nextScheduledFertilizingDay() string {
-	var last time.Time
-	if len(p.FertilizedAt) > 0 {
-		last = p.FertilizedAt[len(p.FertilizedAt)-1]
-	}
+	//var last time.Time
+	//if len(p.FertilizedAt) > 0 {
+	//last = p.FertilizedAt[len(p.FertilizedAt)-1]
+	//}
 
-	return scheduledIn(last, p.FertilizingIntervals)
+	if days, ok := scheduledIn(last(p.FertilizedAt), p.FertilizingIntervals); ok {
+		return humanDaysDuration(days)
+	}
+	return "unknown"
 }
 
-func scheduledIn(lastEvent time.Time, intervals SeasonalIntervals) (days int) {
-	var days int
+func scheduledIn(lastEvent time.Time, intervals SeasonalIntervals) (days int, ok bool) {
 	now := time.Now()
 	d := now.YearDay()
 
@@ -1051,7 +1065,7 @@ func scheduledIn(lastEvent time.Time, intervals SeasonalIntervals) (days int) {
 			// is Winter, calculate duration until summer
 		} else {
 			if lastEvent.IsZero() {
-				return "unknown"
+				return 0, false
 			}
 
 			next := lastEvent.Add(24 * time.Hour * time.Duration(intervals.Winter))
@@ -1059,7 +1073,7 @@ func scheduledIn(lastEvent time.Time, intervals SeasonalIntervals) (days int) {
 		}
 	} else {
 		if lastEvent.IsZero() {
-			return "unknown"
+			return 0, false
 		}
 
 		// is Summer, and interval is always set.
@@ -1067,39 +1081,41 @@ func scheduledIn(lastEvent time.Time, intervals SeasonalIntervals) (days int) {
 		days = daysFromToday(next)
 	}
 
-	return days
-}
-
-func humanDaysDate(days int) string {
-	switch {
-	case days < -1:
-		return strconv.Itoa(-days) + " days overdue"
-	case days == -1:
-		return "1 day overdue"
-	case days == 0:
-		return "today"
-	case days == 1:
-		return "tomorrow"
-	default:
-		return "in " + humanDaysDuration(days)
-	}
+	return days, true
 }
 
 func humanDaysDuration(days int) string {
-	if days < 14 {
-		return strconv.Itoa(days) + " days"
+	readableDuration := func(days int) string {
+		if days < 14 {
+			return strconv.Itoa(days) + " days"
+		}
+
+		weeks := days / 7
+		remainder := days % 7
+		if remainder > 3 {
+			weeks++
+		}
+		var sign string
+		if remainder != 0 {
+			sign = "~"
+		}
+		return sign + strconv.Itoa(weeks) + " weeks"
 	}
 
-	weeks := days / 7
-	remainder := days % 7
-	if remainder > 3 {
-		weeks++
+	switch days {
+	case 0:
+		return "today"
+	case 1:
+		return "tomorrow"
+	case -1:
+		return "yesterday"
+	default:
+		if days > 0 {
+			return "in " + readableDuration(days)
+		} else {
+			return readableDuration(-days) + " ago"
+		}
 	}
-	var sign string
-	if remainder != 0 {
-		sign = "~"
-	}
-	return sign + strconv.Itoa(weeks) + " weeks"
 }
 
 // will probably be slightly off in case of daylight savings time, but so what.
@@ -1114,20 +1130,7 @@ func formatTimeInDays(t time.Time) string {
 		return "never"
 	}
 
-	switch days := daysFromToday(t); days {
-	case 0:
-		return "today"
-	case 1:
-		return "tomorrow"
-	case -1:
-		return "yesterday"
-	default:
-		if days > 0 {
-			return "in " + humanDaysDuration(days)
-		} else {
-			return humanDaysDuration(-days) + " ago"
-		}
-	}
+	return humanDaysDuration(daysFromToday(t))
 }
 
 // assumes the times are ordered.
