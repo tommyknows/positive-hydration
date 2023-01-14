@@ -350,11 +350,8 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 		return ti
 	}
 
-	plantName := newTextInput("Plant Name", "Friedrich")
-	plantName.Focus()
-	plantName.PromptStyle = focusedStyle
-	plantName.TextStyle = focusedStyle
 	var (
+		plantName   = newTextInput("Plant Name", "Friedrich")
 		variety     = newTextInput("Variety", "monstera deliciosa")
 		location    = newTextInput("Location", "Kitchen")
 		wetSoil     = newIntInput("Wet Soil Depth", "in cm")
@@ -378,9 +375,13 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 		sourcedFrom = withValue(sourcedFrom, p.SourcedFrom)
 		comments = withValue(comments, p.Comments)
 	}
+	plantName.Focus()
+	plantName.PromptStyle = focusedStyle
+	plantName.TextStyle = focusedStyle
 
 	title := "Edit Plant"
 	if p == nil {
+		p = new(Plant)
 		title = "Add Plant"
 	}
 	return &inputPrompt{
@@ -391,37 +392,33 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 			lightLevel, sourcedFrom, comments,
 		},
 		confirmAction: func(ap *inputPrompt) tea.Model {
-			promptPlant := Plant{
-				Name:     ap.inputs[0].Value(),
-				Variety:  ap.inputs[1].Value(),
-				Location: ap.inputs[2].Value(),
-				WetSoilDepth: func() int {
-					s, _ := strconv.Atoi(ap.inputs[3].Value())
-					return s
-				}(),
-				WateringIntervals: func() SeasonalIntervals {
-					si, _ := parseSeasonalIntervals(ap.inputs[4].Value())
-					return si
-				}(),
-				FertilizingIntervals: func() SeasonalIntervals {
-					si, _ := parseSeasonalIntervals(ap.inputs[5].Value())
-					return si
-				}(),
-				PotSize: func() int {
-					s, _ := strconv.Atoi(ap.inputs[6].Value())
-					return s
-				}(),
-				LightLevel: func() *LightLevel {
-					l, _ := parseLightLevel(ap.inputs[7].Value())
-					return l
-				}(),
-				SourcedFrom: ap.inputs[8].Value(),
-				Comments:    ap.inputs[9].Value(),
-			}
+			p.Name = ap.inputs[0].Value()
+			p.Variety = ap.inputs[1].Value()
+			p.Location = ap.inputs[2].Value()
+			p.WetSoilDepth = func() int {
+				s, _ := strconv.Atoi(ap.inputs[3].Value())
+				return s
+			}()
+			p.WateringIntervals = func() SeasonalIntervals {
+				si, _ := parseSeasonalIntervals(ap.inputs[4].Value())
+				return si
+			}()
+			p.FertilizingIntervals = func() SeasonalIntervals {
+				si, _ := parseSeasonalIntervals(ap.inputs[5].Value())
+				return si
+			}()
+			p.PotSize = func() int {
+				s, _ := strconv.Atoi(ap.inputs[6].Value())
+				return s
+			}()
+			p.LightLevel = func() *LightLevel {
+				l, _ := parseLightLevel(ap.inputs[7].Value())
+				return l
+			}()
+			p.SourcedFrom = ap.inputs[8].Value()
+			p.Comments = ap.inputs[9].Value()
 			if confirm != nil {
-				confirm(&promptPlant)
-			} else {
-				*p = promptPlant
+				confirm(p)
 			}
 			return nil
 		},
