@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,8 +20,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	calendar "github.com/tommyknows/positive-hydration/calendar"
 )
-
-const dbFile = "/Users/ramon/.config/positive_hydration.json"
 
 var (
 	titleStyle        = lipgloss.NewStyle().MarginLeft(2).Bold(true)
@@ -53,26 +53,9 @@ type ShowPlants struct {
 }
 
 func newShowPlants(pDB *PlantDB) *ShowPlants {
-	items := make([]list.Item, 0, len(pDB.Plants))
-	for _, plant := range pDB.Plants {
-		items = append(items, plant)
-	}
-
-	// sort plants by next watering day.
-	sort.Slice(items, func(i, j int) bool {
-		di, iok := scheduledIn(last(items[i].(*Plant).WateredAt), items[i].(*Plant).WateringIntervals)
-		dj, jok := scheduledIn(last(items[j].(*Plant).WateredAt), items[j].(*Plant).WateringIntervals)
-		if iok && jok {
-			return di < dj
-		} else if jok {
-			return true
-		}
-		return false
-	})
-
 	delegate := list.NewDefaultDelegate()
 	delegate.SetHeight(3)
-	l := list.New(items, delegate, 80, 31)
+	l := list.New(pDB.Items(), delegate, 80, 31)
 	// overwrite nextPage keys as "f" is used to mark as fertilized.
 	var keys []string
 	for _, k := range l.KeyMap.NextPage.Keys() {
@@ -204,11 +187,11 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sp.list.SettingFilter() || sp.prompt != nil {
 				break
 			}
-			// TODO: list doesn't actually update after adding the plant.
-			// App has to be restarted for that.
 			var p *Plant
 			sp.prompt = p.Prompt(func(p *Plant) {
 				sp.PlantDB.Plants = append(sp.PlantDB.Plants, p)
+				// TODO: this would return a command, but I'm not sure what to do with it.
+				_ = sp.list.SetItems(sp.PlantDB.Items())
 			})
 			return sp, nil
 
@@ -583,7 +566,11 @@ func newRepottingPrompt(plant *Plant) *inputPrompt {
 }
 
 func main() {
-	pDB, err := readDBFile("/Users/ramon/.config/positive_hydration.json")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("could not determine home dir: %v", err)
+	}
+	pDB, err := readDBFile(path.Join(home, ".config", "positive_hydration.json"))
 	if err != nil {
 		fmt.Println("could not read DB file: ", err)
 		os.Exit(2)
@@ -656,6 +643,27 @@ func (pDB *PlantDB) normalise() {
 type PlantDB struct {
 	dbLocation string
 	Plants     []*Plant `json:"plants"`
+}
+
+func (p *PlantDB) Items() []list.Item {
+	items := make([]list.Item, 0, len(p.Plants))
+	for _, plant := range p.Plants {
+		items = append(items, plant)
+	}
+
+	// sort plants by next watering day.
+	sort.Slice(items, func(i, j int) bool {
+		di, iok := scheduledIn(last(items[i].(*Plant).WateredAt), items[i].(*Plant).WateringIntervals)
+		dj, jok := scheduledIn(last(items[j].(*Plant).WateredAt), items[j].(*Plant).WateringIntervals)
+		if iok && jok {
+			return di < dj
+		} else if jok {
+			return true
+		}
+		return false
+	})
+
+	return items
 }
 
 type Plant struct {
