@@ -117,15 +117,19 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 }
 
 func (sp *ShowPlants) View() string {
+	var right string
 	if len(sp.Plants) == 0 {
-		return quitTextStyle.Render("You have no planties yet! Press a to add")
-	}
-
-	if len(sp.list.VisibleItems()) > 0 {
+		//var p *Plant
+		//sp.prompt = p.Prompt(func(p *Plant) {
+		//sp.PlantDB.Plants = append(sp.PlantDB.Plants, p)
+		//// TODO: this would return a command, but I'm not sure what to do with it.
+		//_ = sp.list.SetItems(sp.PlantDB.Items())
+		//})
+	} else if len(sp.list.VisibleItems()) > 0 {
 		sp.showPlant = sp.list.VisibleItems()[sp.list.Index()].(*Plant)
+		right = sp.showPlant.Render(!sp.list.Help.ShowAll)
 	}
 
-	right := sp.showPlant.Render(!sp.list.Help.ShowAll)
 	if sp.prompt != nil {
 		right = lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).
@@ -149,6 +153,13 @@ func (sp *ShowPlants) View() string {
 }
 
 func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if len(sp.Plants) == 0 && sp.prompt == nil {
+		msg = tea.KeyMsg{
+			Alt:   false,
+			Type:  tea.KeyRunes,
+			Runes: []rune{'a'},
+		}
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		// TODO, not sure what to do.
@@ -227,8 +238,9 @@ func (sp *ShowPlants) Init() tea.Cmd {
 type inputPrompt struct {
 	focusIndex    int
 	inputs        []textinput.Model
-	confirmAction func(*inputPrompt) tea.Model
+	confirmAction func(*inputPrompt) (tea.Model, error)
 	title         string
+	err           error
 }
 
 func (ip *inputPrompt) View() string {
@@ -248,6 +260,9 @@ func (ip *inputPrompt) View() string {
 		button = &focusedButton
 	}
 	fmt.Fprintf(&b, "\n\n%s\n\n", *button)
+	if ip.err != nil {
+		fmt.Fprintf(&b, ip.err.Error())
+	}
 
 	return b.String()
 }
@@ -279,7 +294,12 @@ func (ip *inputPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Did the user press enter while the submit button was focused?
 			// If so, exit.
 			if s == "enter" && ip.focusIndex == len(ip.inputs) {
-				return ip.confirmAction(ip), nil
+				m, err := ip.confirmAction(ip)
+				if err == nil {
+					return m, nil
+				}
+				// TODO
+				ip.err = err
 			}
 
 			// Cycle indexes
@@ -374,8 +394,11 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 			wetSoil, watering, fertilizing, potSize,
 			lightLevel, sourcedFrom, comments,
 		},
-		confirmAction: func(ap *inputPrompt) tea.Model {
+		confirmAction: func(ap *inputPrompt) (tea.Model, error) {
 			p.Name = ap.inputs[0].Value()
+			if p.Name == "" {
+				return nil, fmt.Errorf("name cannot be empty!")
+			}
 			p.Variety = ap.inputs[1].Value()
 			p.Location = ap.inputs[2].Value()
 			p.WetSoilDepth = func() int {
@@ -403,7 +426,7 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 			if confirm != nil {
 				confirm(p)
 			}
-			return nil
+			return nil, nil
 		},
 	}
 }
@@ -497,11 +520,11 @@ func newFertilizerPrompt(plant *Plant) *inputPrompt {
 		inputs:     []textinput.Model{date, input},
 		focusIndex: 1,
 		title:      "Add / Remove Fertilization Event",
-		confirmAction: func(ip *inputPrompt) tea.Model {
+		confirmAction: func(ip *inputPrompt) (tea.Model, error) {
 			date, err := parseInputDate(ip.inputs[0].Value())
 			if err != nil {
 				// should already be verified by the Validate action on the input.
-				panic(err)
+				return nil, fmt.Errorf("invalid date: %v", err)
 			}
 
 			var ft FertilizerType
@@ -514,7 +537,7 @@ func newFertilizerPrompt(plant *Plant) *inputPrompt {
 
 			plant.FertilizedAt = toggleEvent(plant.FertilizedAt, date)
 			plant.FertilizedWith = &ft
-			return nil
+			return nil, nil
 		},
 	}
 }
@@ -527,15 +550,15 @@ func newWateringPrompt(plant *Plant) *inputPrompt {
 	return &inputPrompt{
 		inputs: []textinput.Model{date},
 		title:  "Add / Remove Watering Event",
-		confirmAction: func(ip *inputPrompt) tea.Model {
+		confirmAction: func(ip *inputPrompt) (tea.Model, error) {
 			date, err := parseInputDate(ip.inputs[0].Value())
 			if err != nil {
 				// should already be verified by the Validate action on the input.
-				panic(err)
+				return nil, fmt.Errorf("invalid date: %v", err)
 			}
 
 			plant.WateredAt = toggleEvent(plant.WateredAt, date)
-			return nil
+			return nil, nil
 		},
 	}
 }
@@ -550,17 +573,17 @@ func newRepottingPrompt(plant *Plant) *inputPrompt {
 		inputs:     []textinput.Model{date, newSize},
 		focusIndex: 1,
 		title:      "Add / Remove Repotting Event",
-		confirmAction: func(ip *inputPrompt) tea.Model {
+		confirmAction: func(ip *inputPrompt) (tea.Model, error) {
 			date, err := parseInputDate(ip.inputs[0].Value())
 			if err != nil {
 				// should already be verified by the Validate action on the input.
-				panic(err)
+				return nil, fmt.Errorf("invalid date: %v", err)
 			}
 
 			newSize, _ := strconv.Atoi(ip.inputs[0].Value())
 			plant.PotSize = newSize
 			plant.RepottedAt = toggleEvent(plant.RepottedAt, date)
-			return nil
+			return nil, nil
 		},
 	}
 }
@@ -570,6 +593,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not determine home dir: %v", err)
 	}
+
 	pDB, err := readDBFile(path.Join(home, ".config", "positive_hydration.json"))
 	if err != nil {
 		fmt.Println("could not read DB file: ", err)
@@ -645,7 +669,22 @@ type PlantDB struct {
 	Plants     []*Plant `json:"plants"`
 }
 
+type NoPlantsEntry struct{}
+
+func (NoPlantsEntry) FilterValue() string {
+	return ""
+}
+func (NoPlantsEntry) Title() string {
+	return "You have no Planties yet!"
+}
+func (NoPlantsEntry) Description() string {
+	return "Add one..."
+}
+
 func (p *PlantDB) Items() []list.Item {
+	if len(p.Plants) == 0 {
+		return []list.Item{NoPlantsEntry{}}
+	}
 	items := make([]list.Item, 0, len(p.Plants))
 	for _, plant := range p.Plants {
 		items = append(items, plant)
