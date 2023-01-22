@@ -1136,12 +1136,9 @@ func humanDaysDuration(days int) string {
 
 		weeks := days / 7
 		remainder := days % 7
-		if remainder > 3 {
-			weeks++
-		}
 		var sign string
 		if remainder != 0 {
-			sign = "~"
+			sign = ">"
 		}
 		return sign + strconv.Itoa(weeks) + " weeks"
 	}
