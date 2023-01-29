@@ -88,6 +88,10 @@ func newShowPlants(pDB *PlantDB) *ShowPlants {
 				key.WithHelp("a", "add plant"),
 			),
 			key.NewBinding(
+				key.WithKeys("c"),
+				key.WithHelp("c", "copy plant"),
+			),
+			key.NewBinding(
 				key.WithKeys("w"),
 				key.WithHelp("w", "mark as watered"),
 			),
@@ -170,13 +174,21 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return sp, tea.Quit
 
-		case "w", "f", "p", "W", "e":
+		case "c", "w", "f", "p", "W", "e":
 			if sp.list.SettingFilter() || sp.prompt != nil {
 				break
 			}
 			if len(sp.list.VisibleItems()) > 0 {
 				p := sp.list.VisibleItems()[sp.list.Index()].(*Plant)
 				switch keypress {
+				case "c":
+					copied := p.Clone()
+					sp.prompt = copied.Prompt(func(p *Plant) {
+						sp.PlantDB.Plants = append(sp.PlantDB.Plants, p)
+						// TODO: this would return a command, but I'm not sure what to do with it.
+						_ = sp.list.SetItems(sp.PlantDB.Items())
+					})
+					return sp, nil
 				case "w":
 					p.WateredAt = toggleEvent(p.WateredAt, time.Now())
 				case "W":
@@ -417,7 +429,7 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 				s, _ := strconv.Atoi(ap.inputs[6].Value())
 				return s
 			}()
-			p.LightLevel = func() *LightLevel {
+			p.LightLevel = func() LightLevel {
 				l, _ := parseLightLevel(ap.inputs[7].Value())
 				return l
 			}()
@@ -536,7 +548,7 @@ func newFertilizerPrompt(plant *Plant) *inputPrompt {
 			}
 
 			plant.FertilizedAt = toggleEvent(plant.FertilizedAt, date)
-			plant.FertilizedWith = &ft
+			plant.FertilizedWith = ft
 			return nil, nil
 		},
 	}
@@ -711,13 +723,13 @@ type Plant struct {
 	Location             string            `json:"location"`
 	WateredAt            []time.Time       `json:"watered_at"`
 	FertilizedAt         []time.Time       `json:"fertilized_at"`
-	FertilizedWith       *FertilizerType   `json:"fertilizer_type,omitempty"`
+	FertilizedWith       FertilizerType    `json:"fertilizer_type,omitempty"`
 	PotSize              int               `json:"pot_size"`
 	RepottedAt           []time.Time       `json:"repotted_at"`
 	WateringIntervals    SeasonalIntervals `json:"watering_intervals"`
 	WetSoilDepth         int               `json:"wet_soil_depth"`
 	FertilizingIntervals SeasonalIntervals `json:"fertilizing_intervals"`
-	LightLevel           *LightLevel       `json:"light_level"`
+	LightLevel           LightLevel        `json:"light_level,omitempty"`
 	Comments             string            `json:"comments"`
 	SourcedFrom          string            `json:"sourced_from"`
 }
@@ -742,12 +754,10 @@ func (l *LightLevel) String() string {
 	if l == nil {
 		return ""
 	}
-	for i := range lightLevels {
-		if lightLevels[i] == *l {
-			return strconv.Itoa(i) + ": " + string(*l)
-		}
+	if s := string(*l); s != "" {
+		return s
 	}
-	return "unknown light level"
+	return "unknown"
 }
 
 func (l *LightLevel) UnmarshalJSON(b []byte) error {
@@ -755,7 +765,12 @@ func (l *LightLevel) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return err
 	}
-	if s < 0 || s > len(lightLevels) {
+	if s == 0 {
+		*l = ""
+		return nil
+	}
+
+	if s < 1 || s >= len(lightLevels) {
 		return fmt.Errorf("invalid light level: %q", s)
 	}
 
@@ -775,26 +790,26 @@ func (l *LightLevel) MarshalJSON() ([]byte, error) {
 		}
 	}
 	if level == 0 {
-		return nil, fmt.Errorf("invalid light level %q", *l)
+		return nil, nil
 	}
 
 	return json.Marshal(level)
 }
 
-func parseLightLevel(s string) (*LightLevel, error) {
+func parseLightLevel(s string) (LightLevel, error) {
 	i, err := strconv.Atoi(s)
 	if err != nil {
 		for _, ll := range lightLevels {
 			if string(ll) == s {
-				return &ll, nil
+				return ll, nil
 			}
 		}
-		return nil, fmt.Errorf("invalid light level: %v", s)
+		return "", fmt.Errorf("invalid light level: %v", s)
 	}
 	if i > len(lightLevels)-1 {
-		return nil, fmt.Errorf("light level out of range")
+		return "", fmt.Errorf("light level out of range")
 	}
-	return &lightLevels[i], nil
+	return lightLevels[i], nil
 }
 
 type SeasonalIntervals struct {
@@ -862,6 +877,31 @@ func (p Plant) Render(includeStats bool) string {
 	return lipgloss.JoinVertical(lipgloss.Center, parts...)
 }
 
+func (p Plant) Clone() *Plant {
+	return &Plant{
+		Name:                 p.Name,
+		Variety:              p.Variety,
+		Location:             p.Location,
+		WateredAt:            nil,
+		FertilizedAt:         nil,
+		FertilizedWith:       p.FertilizedWith,
+		PotSize:              p.PotSize,
+		RepottedAt:           nil,
+		WateringIntervals:    p.WateringIntervals,
+		WetSoilDepth:         p.WetSoilDepth,
+		FertilizingIntervals: p.FertilizingIntervals,
+		LightLevel:           p.LightLevel,
+		Comments:             p.Comments,
+		SourcedFrom:          p.SourcedFrom,
+	}
+}
+
+func copyTimes(ts []time.Time) []time.Time {
+	c := make([]time.Time, len(ts))
+	copy(c, ts)
+	return c
+}
+
 func (p Plant) Events() []calendar.Event {
 	var (
 		wateredColor    = lipgloss.Color("#1d0ed1")
@@ -923,8 +963,8 @@ func (p Plant) Overview() string {
 	if p.PotSize != 0 {
 		additionalRows = append(additionalRows, table.Row{"Pot Size", p.formatPotSize()})
 	}
-	if p.FertilizedWith != nil {
-		additionalRows = append(additionalRows, table.Row{"Fertilizer", string(*p.FertilizedWith)})
+	if p.FertilizedWith != "" {
+		additionalRows = append(additionalRows, table.Row{"Fertilizer", string(p.FertilizedWith)})
 	}
 	if p.SourcedFrom != "" {
 		additionalRows = append(additionalRows, table.Row{"Sourced From", p.SourcedFrom})
@@ -1193,7 +1233,10 @@ func formatAverage(avg float64) string {
 // time points. If numLastDays is non-zero, it will only calculate the
 // average of the durations between time points that lie within the
 // last numLastDays.
-func average(of []time.Time, numLastDays int) float64 {
+func average(
+	of []time.Time,
+	numLastDays int,
+) float64 {
 	dur := time.Duration(numLastDays) * time.Hour * 24
 	start := time.Now().Add(-dur)
 
