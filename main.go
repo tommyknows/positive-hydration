@@ -183,7 +183,7 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch keypress {
 				case "c":
 					copied := p.Clone()
-					sp.prompt = copied.Prompt(func(p *Plant) {
+					sp.prompt = copied.Prompt("Copy Plant", func(p *Plant) {
 						sp.PlantDB.Plants = append(sp.PlantDB.Plants, p)
 						// TODO: this would return a command, but I'm not sure what to do with it.
 						_ = sp.list.SetItems(sp.PlantDB.Items())
@@ -201,7 +201,7 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					sp.prompt = newRepottingPrompt(p)
 					return sp, nil
 				case "e": // edit
-					sp.prompt = p.Prompt(nil)
+					sp.prompt = p.Prompt("Edit Plant", nil)
 					return sp, nil
 				}
 			}
@@ -211,7 +211,7 @@ func (sp *ShowPlants) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			var p *Plant
-			sp.prompt = p.Prompt(func(p *Plant) {
+			sp.prompt = p.Prompt("Add Plant", func(p *Plant) {
 				sp.PlantDB.Plants = append(sp.PlantDB.Plants, p)
 				// TODO: this would return a command, but I'm not sure what to do with it.
 				_ = sp.list.SetItems(sp.PlantDB.Items())
@@ -351,7 +351,7 @@ func (ip *inputPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (ip *inputPrompt) Init() tea.Cmd { return textinput.Blink }
 
-func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
+func (p *Plant) Prompt(title string, confirm func(p *Plant)) *inputPrompt {
 	if p == nil && confirm == nil {
 		return nil
 	}
@@ -394,10 +394,8 @@ func (p *Plant) Prompt(confirm func(p *Plant)) *inputPrompt {
 	plantName.PromptStyle = focusedStyle
 	plantName.TextStyle = focusedStyle
 
-	title := "Edit Plant"
 	if p == nil {
 		p = new(Plant)
-		title = "Add Plant"
 	}
 	return &inputPrompt{
 		title: title,
